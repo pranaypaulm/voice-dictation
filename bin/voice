@@ -23,7 +23,7 @@ import sys
 import time
 import urllib.request
 
-VERSION = "1.0.0"
+VERSION = "1.1.0"
 
 # repo layout: <repo>/bin/voice, <repo>/lib/inject.py
 SCRIPT_DIR = os.path.dirname(os.path.realpath(__file__))
@@ -63,13 +63,77 @@ def save_config(cfg: dict) -> None:
     os.chmod(CONFIG, 0o600)
 
 
-def notify(msg: str, title: str = "Voice input") -> None:
+NOTIFY_ID = os.path.join(STATE, "notify.id")
+NOTIFY_MODE = "minimal"          # minimal | full | off   (set in main)
+
+
+def _stored_id() -> int:
     try:
-        subprocess.run(["notify-send", "-a", "Voice", "-t", "2500", title, msg],
-                       check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    except FileNotFoundError:
+        return int(open(NOTIFY_ID).read().strip())
+    except (OSError, ValueError):
+        return 0
+
+
+def _save_id(nid: int) -> None:
+    try:
+        open(NOTIFY_ID, "w").write(str(nid))
+    except OSError:
         pass
+
+
+def _close_notification() -> None:
+    """Dismiss the transient status toast immediately instead of waiting it out."""
+    nid = _stored_id()
+    if not nid:
+        return
+    try:
+        subprocess.run(
+            ["gdbus", "call", "--session", "--dest", "org.freedesktop.Notifications",
+             "--object-path=/org/freedesktop/Notifications",
+             "--method=org.freedesktop.Notifications.CloseNotification", str(nid)],
+            check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=3)
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        pass
+    try:
+        os.unlink(NOTIFY_ID)
+    except OSError:
+        pass
+
+
+def _send(msg: str, title: str, transient: bool, timeout: int, replace_id: int = 0) -> int:
+    cmd = ["notify-send", "-a", "Voice", "-t", str(timeout), "-p"]
+    if transient:
+        cmd.append("-e")            # don't persist in the notification center
+    if replace_id:
+        cmd += ["-r", str(replace_id)]
+    cmd += [title, msg]
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
+        return int((r.stdout or "0").strip() or 0)
+    except (FileNotFoundError, ValueError, subprocess.TimeoutExpired):
+        return 0
+
+
+def notify(msg: str, title: str = "Voice input", level: str = "status") -> None:
+    """level: status | warn | info | error.
+
+    minimal (default): one transient toast that is replaced, never in the tray.
+    full:              persistent toasts, including the transcript preview.
+    off:               only real errors surface.
+    """
     print(msg, file=sys.stderr, flush=True)
+    if level == "error":
+        _send(msg, title, transient=False, timeout=5000)
+        return
+    if NOTIFY_MODE == "off":
+        return
+    if level == "info" and NOTIFY_MODE != "full":
+        return
+    if NOTIFY_MODE == "full":
+        _send(msg, title, transient=False, timeout=2500)
+        return
+    _save_id(_send(msg, title, transient=True, timeout=1500,
+                   replace_id=_stored_id()))
 
 
 def ensure_state() -> None:
@@ -100,7 +164,7 @@ def recording_pid() -> int | None:
 
 def start() -> int:
     if recording_pid():
-        notify("already listening")
+        notify("already listening", level="warn")
         return 0
     ensure_state()
     if os.path.exists(WAV):
@@ -112,7 +176,7 @@ def start() -> int:
         start_new_session=True,
     )
     open(PIDF, "w").write(str(proc.pid))
-    notify("\U0001F3A4 listening… press the hotkey again to stop")
+    notify("\U0001F3A4 listening…")
     return 0
 
 
@@ -211,7 +275,7 @@ def transcribe(wav: str, model: str, engine: str, language: str) -> str:
         except Exception as exc:
             if engine == "cloud":
                 raise RuntimeError(f"cloud transcription failed: {exc}") from exc
-            notify(f"cloud unavailable ({exc}) — using local model")
+            notify(f"cloud unavailable ({exc}) — using local model", level="warn")
     return transcribe_local(wav, model, language)
 
 
@@ -265,6 +329,11 @@ def main(argv: list[str]) -> int:
     language = take("--lang", os.environ.get("VOICE_LANG", cfg.get("language", "en")))
     audio_file = take("--file", "")
 
+    global NOTIFY_MODE
+    NOTIFY_MODE = take("--notify", os.environ.get("VOICE_NOTIFY") or cfg.get("notify", "minimal"))
+    if NOTIFY_MODE not in ("minimal", "full", "off"):
+        raise SystemExit(f"--notify must be minimal, full or off (got {NOTIFY_MODE!r})")
+
     cmd = args[0] if args else "toggle"
 
     if audio_file:
@@ -272,16 +341,17 @@ def main(argv: list[str]) -> int:
             text = transcribe(audio_file, model, engine, language)
         except Exception as exc:
             print(f"transcription failed: {exc}", file=sys.stderr)
-            notify(f"transcription failed: {str(exc)[:120]}")
+            notify(f"transcription failed: {str(exc)[:120]}", level="error")
             return 1
         if not text:
-            notify("no speech detected")
+            notify("no speech detected", level="warn")
             return 1
         if no_type:
             print(text)
         else:
-            notify(f"“{text[:60]}”")
+            notify(f"“{text[:60]}”", level="info")
             type_into_focus(text)
+        _close_notification()
         return 0
 
     if cmd == "status":
@@ -304,7 +374,7 @@ def main(argv: list[str]) -> int:
                 os.unlink(PIDF)
             except OSError:
                 pass
-        notify("cancelled")
+        notify("cancelled", level="warn")
         return 0
 
     if cmd == "stop":
@@ -323,26 +393,28 @@ def main(argv: list[str]) -> int:
 
 def _stop_and_type(model: str, no_type: bool, engine: str, language: str) -> int:
     if not stop_recording():
-        notify("nothing recorded")
+        notify("nothing recorded", level="warn")
         return 1
     notify("transcribing…")
     try:
         text = transcribe(WAV, model, engine, language)
     except Exception as exc:
-        notify(f"transcription failed: {str(exc)[:120]}")
+        notify(f"transcription failed: {str(exc)[:120]}", level="error")
         return 1
     if not text:
-        notify("no speech detected")
+        notify("no speech detected", level="warn")
         return 1
     open(os.path.join(STATE, "last.txt"), "w", encoding="utf-8").write(text)
     if no_type:
         print(text)
+        _close_notification()
         return 0
-    notify(f"“{text[:70]}”")
+    notify(f"“{text[:70]}”", level="info")
     if not type_into_focus(text):
-        notify("could not type into the focused window", "Voice input")
+        notify("could not type into the focused window", level="error")
         print(text)
         return 1
+    _close_notification()
     return 0
 
 

@@ -18,6 +18,8 @@ Super+Alt+V   "refactor the auth middleware and add tests"   → typed into the 
   - Automatic fallback: cloud fails/quota/offline → local, without losing the take.
 - **Multi-desktop typing** — GNOME Wayland (no root), wlroots/KDE Wayland, X11.
 - **No Enter sent** — you always get to edit before submitting.
+- **Quiet by default** — one transient toast that is replaced in place, never a stack of
+  notifications in the tray. Errors are the only thing that persists.
 - **Tiny codebase** — one CLI, one injector, stdlib + `python3-gi`. No daemon.
 
 ## Requirements
@@ -75,6 +77,7 @@ voice --no-type          # transcribe and print, don't touch the keyboard
 voice --file take.wav    # transcribe a file
 voice --lang hi          # other languages (cloud engine)
 voice --engine local     # force offline
+voice --notify off       # no popups at all (errors still shown)
 voice --model small.en   # offline model (after ./install.sh --local)
 ```
 
@@ -111,11 +114,34 @@ Check what yours will use: `python3 lib/inject.py --list`.
 {
   "groq_api_key": "gsk_...",
   "language": "en",
-  "local_model": "base.en"
+  "local_model": "base.en",
+  "notify": "minimal"
 }
 ```
 
-Environment overrides: `GROQ_API_KEY`, `VOICE_LANG`, `VOICE_ENGINE`, `VOICE_MODEL`, `VOICE_HOME` (where models live), `VOICE_GROQ_URL` (point at any OpenAI-compatible `/audio/transcriptions` server, e.g. your own faster-whisper).
+Environment overrides: `GROQ_API_KEY`, `VOICE_LANG`, `VOICE_ENGINE`, `VOICE_MODEL`, `VOICE_NOTIFY`, `VOICE_HOME` (where models live), `VOICE_GROQ_URL` (point at any OpenAI-compatible `/audio/transcriptions` server, e.g. your own faster-whisper).
+
+## Notifications
+
+`notify` has three modes:
+
+| Mode | Behaviour |
+|---|---|
+| `minimal` *(default)* | one **transient** toast (`--transient -r <id>`), replaced in place and auto-dismissed — it never enters the notification center, and there is no transcript preview because you can already see the text |
+| `full` | persistent toasts for listening / transcribing / transcript, like a chatty app |
+| `off` | nothing except real errors (failed transcription, microphone busy) |
+
+```bash
+voice --notify off        # one-off
+```
+
+To make it permanent, set it in `~/.config/voice-input/config.json`:
+
+```json
+{ "notify": "off" }
+```
+
+If your tray is already full of old entries, clear it once with **Super+N** → *Clear*.
 
 ## Privacy
 
