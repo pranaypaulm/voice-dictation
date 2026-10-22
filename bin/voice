@@ -64,7 +64,7 @@ def save_config(cfg: dict) -> None:
 
 
 NOTIFY_ID = os.path.join(STATE, "notify.id")
-NOTIFY_MODE = "minimal"          # minimal | full | off   (set in main)
+NOTIFY_MODE = "minimal"    # minimal | full | errors | off   (set in main)
 
 
 def _stored_id() -> int:
@@ -119,13 +119,16 @@ def notify(msg: str, title: str = "Voice input", level: str = "status") -> None:
 
     minimal (default): one transient toast that is replaced, never in the tray.
     full:              persistent toasts, including the transcript preview.
-    off:               only real errors surface.
+    errors:            only failures notify.
+    off:               absolutely nothing — silent dictation.
     """
     print(msg, file=sys.stderr, flush=True)
+    if NOTIFY_MODE == "off":
+        return                      # nothing at all reaches the notification daemon
     if level == "error":
         _send(msg, title, transient=False, timeout=5000)
         return
-    if NOTIFY_MODE == "off":
+    if NOTIFY_MODE == "errors":
         return
     if level == "info" and NOTIFY_MODE != "full":
         return
@@ -331,8 +334,9 @@ def main(argv: list[str]) -> int:
 
     global NOTIFY_MODE
     NOTIFY_MODE = take("--notify", os.environ.get("VOICE_NOTIFY") or cfg.get("notify", "minimal"))
-    if NOTIFY_MODE not in ("minimal", "full", "off"):
-        raise SystemExit(f"--notify must be minimal, full or off (got {NOTIFY_MODE!r})")
+    if NOTIFY_MODE not in ("minimal", "full", "errors", "off"):
+        raise SystemExit(
+            f"--notify must be minimal, full, errors or off (got {NOTIFY_MODE!r})")
 
     cmd = args[0] if args else "toggle"
 

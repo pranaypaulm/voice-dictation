@@ -19,7 +19,7 @@ Super+Alt+V   "refactor the auth middleware and add tests"   → typed into the 
 - **Multi-desktop typing** — GNOME Wayland (no root), wlroots/KDE Wayland, X11.
 - **No Enter sent** — you always get to edit before submitting.
 - **Quiet by default** — one transient toast that is replaced in place, never a stack of
-  notifications in the tray. Errors are the only thing that persists.
+  notifications in the tray. Set `"notify": "off"` for total silence.
 - **Tiny codebase** — one CLI, one injector, stdlib + `python3-gi`. No daemon.
 
 ## Requirements
@@ -77,7 +77,7 @@ voice --no-type          # transcribe and print, don't touch the keyboard
 voice --file take.wav    # transcribe a file
 voice --lang hi          # other languages (cloud engine)
 voice --engine local     # force offline
-voice --notify off       # no popups at all (errors still shown)
+voice --notify off       # no popups at all, not even errors
 voice --model small.en   # offline model (after ./install.sh --local)
 ```
 
@@ -129,7 +129,8 @@ Environment overrides: `GROQ_API_KEY`, `VOICE_LANG`, `VOICE_ENGINE`, `VOICE_MODE
 |---|---|
 | `minimal` *(default)* | one **transient** toast (`--transient -r <id>`), replaced in place and auto-dismissed — it never enters the notification center, and there is no transcript preview because you can already see the text |
 | `full` | persistent toasts for listening / transcribing / transcript, like a chatty app |
-| `off` | nothing except real errors (failed transcription, microphone busy) |
+| `errors` | only failures notify |
+| `off` | **silent** — nothing is sent to the notification daemon at all |
 
 ```bash
 voice --notify off        # one-off
