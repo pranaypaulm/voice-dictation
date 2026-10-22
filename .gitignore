@@ -1,0 +1,9 @@
+__pycache__/
+*.pyc
+*.wav
+*.bin
+models/
+whisper.cpp/
+build/
+config.json
+.env
